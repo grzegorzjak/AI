@@ -1,1 +1,34 @@
-aaa
+ String h = req.getHeader(authHeaderName);
+    if (h != null && h.startsWith("Bearer ")) {
+      try {
+        String token = h.substring(7);
+        com.auth0.jwt.interfaces.DecodedJWT jwt = com.auth0.jwt.JWT.decode(token);
+
+        String username = jwt.getSubject(); // może być null — to OK
+        // roles może być stringiem "A,B" albo listą
+        List<String> roles = new ArrayList<>();
+        com.auth0.jwt.interfaces.Claim c = jwt.getClaim(rolesClaim);
+        if (!c.isNull()) {
+          List<String> arr = c.asList(String.class);
+          if (arr != null) roles.addAll(arr);
+          else if (c.asString() != null)
+            roles.addAll(Arrays.stream(c.asString().split(",")).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toList()));
+        }
+
+        Collection<GrantedAuthority> auths = roles.stream()
+            .map(r -> r.startsWith("ROLE_") ? r : "ROLE_" + r)
+            .map(SimpleGrantedAuthority::new)
+            .collect(Collectors.toList());
+
+        if (!auths.isEmpty()) {
+          UsernamePasswordAuthenticationToken auth =
+              new UsernamePasswordAuthenticationToken(username != null ? username : "anonymous", null, auths);
+          SecurityContextHolder.getContext().setAuthentication(auth);
+        }
+      } catch (Exception ignored) {
+        // zły format? — zostawiamy bez auth; reguły security zadziałają jak dla anonima
+      }
+    }
+
+    chain.doFilter(req, res);
+  }
