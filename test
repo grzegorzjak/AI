@@ -1,34 +1,55 @@
- String h = req.getHeader(authHeaderName);
-    if (h != null && h.startsWith("Bearer ")) {
-      try {
-        String token = h.substring(7);
-        com.auth0.jwt.interfaces.DecodedJWT jwt = com.auth0.jwt.JWT.decode(token);
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
+import java.nio.charset.StandardCharsets
+import java.util.Base64
+import groovy.json.JsonBuilder
 
-        String username = jwt.getSubject(); // może być null — to OK
-        // roles może być stringiem "A,B" albo listą
-        List<String> roles = new ArrayList<>();
-        com.auth0.jwt.interfaces.Claim c = jwt.getClaim(rolesClaim);
-        if (!c.isNull()) {
-          List<String> arr = c.asList(String.class);
-          if (arr != null) roles.addAll(arr);
-          else if (c.asString() != null)
-            roles.addAll(Arrays.stream(c.asString().split(",")).map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toList()));
-        }
+// --- JWT HS256 (HMAC-SHA256) generator ---
+static String createJwtHs256(String secret, String role) {
+    def header  = [alg: "HS256", typ: "JWT"]
+    long now    = (System.currentTimeMillis() / 1000L) as long
+    def payload = [
+        sub : "jenkins",
+        iss : "api-gateway",
+        iat : now,
+        exp : now + 300,     // 5 min
+        role: role           // <- uzupełnij rolę
+    ]
 
-        Collection<GrantedAuthority> auths = roles.stream()
-            .map(r -> r.startsWith("ROLE_") ? r : "ROLE_" + r)
-            .map(SimpleGrantedAuthority::new)
-            .collect(Collectors.toList());
+    String hB64 = Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(new JsonBuilder(header).toString().getBytes(StandardCharsets.UTF_8))
+    String pB64 = Base64.getUrlEncoder().withoutPadding()
+        .encodeToString(new JsonBuilder(payload).toString().getBytes(StandardCharsets.UTF_8))
 
-        if (!auths.isEmpty()) {
-          UsernamePasswordAuthenticationToken auth =
-              new UsernamePasswordAuthenticationToken(username != null ? username : "anonymous", null, auths);
-          SecurityContextHolder.getContext().setAuthentication(auth);
-        }
-      } catch (Exception ignored) {
-        // zły format? — zostawiamy bez auth; reguły security zadziałają jak dla anonima
-      }
-    }
+    String signingInput = "${hB64}.${pB64}"
+    Mac mac = Mac.getInstance("HmacSHA256")
+    mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"))
+    byte[] sig = mac.doFinal(signingInput.getBytes(StandardCharsets.UTF_8))
+    String sB64 = Base64.getUrlEncoder().withoutPadding().encodeToString(sig)
 
-    chain.doFilter(req, res);
-  }
+    return "${signingInput}.${sB64}"
+}
+
+// --- Twoja metoda z nagłówkiem Authorization: Bearer <JWT> ---
+String getCycleNumberFromApi() {
+    String cycleNumbersApiUrl = "${dockerApplicationInfrastructureLib.defaultWeblogicManagedServerContainerName()}:urls"
+    String extractApiUser     = ""
+
+    // UZUPEŁNIJ:
+    String secret = "<TWOJ_SECRET>"
+    String role   = "<TWOJA_ROLA>"
+
+    String jwt = createJwtHs256(secret, role)
+
+    def response = sh(
+        returnStdout: true,
+        script: """
+            curl -s -o /dev/null -w "%{http_code}" \\
+                 -H "Authorization: Bearer ${jwt}" \\
+                 --request GET ${cycleNumbersApiUrl}
+        """
+    ).trim()
+
+    def responseObject = new JsonSlurperClassic().parseText(response)
+    return responseObject[0].cycleNumber
+}
