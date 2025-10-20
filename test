@@ -1,94 +1,24 @@
-import jakarta.annotation.security.DenyAll;
-import jakarta.annotation.security.PermitAll;
-import jakarta.annotation.security.RolesAllowed;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.core.convert.converter.Converter;
-import org.springframework.security.authentication.AbstractAuthenticationToken;
-import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
-import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
-import org.springframework.security.oauth2.jwt.Jwt;
-import org.springframework.security.oauth2.jwt.JwtDecoder;
-import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
-import org.springframework.security.web.SecurityFilterChain;
+  @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        // roles z claimu "roles" -> GrantedAuthority "ROLE_*"
+        org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter rolesConv =
+                new org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter();
+        rolesConv.setAuthoritiesClaimName("roles");
+        rolesConv.setAuthorityPrefix("ROLE_");
 
-import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
+        org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter jwtAuth =
+                new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter();
+        jwtAuth.setJwtGrantedAuthoritiesConverter(rolesConv);
 
-@Configuration
-@EnableMethodSecurity(jsr250Enabled = true, prePostEnabled = true)
-public class SecurityConfig {
-
-    @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http,
-                                           Converter<Jwt, ? extends AbstractAuthenticationToken> jwtAuthConverter) throws Exception {
         return http
             .csrf(csrf -> csrf.disable())
-            .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .sessionManagement(sm -> sm.sessionCreationPolicy(org.springframework.security.config.http.SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/**", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
                 .anyRequest().authenticated()
             )
             .oauth2ResourceServer(oauth -> oauth
-                .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthConverter))
+                .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuth))
             )
             .build();
     }
-
-    @Bean
-    public JwtDecoder jwtDecoder(@Value("${security.jwt.secret}") String secret) {
-        SecretKeySpec key = new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
-        return NimbusJwtDecoder.withSecretKey(key).macAlgorithm(MacAlgorithm.HS256).build();
-    }
-
-    // Converter budujący Authentication z JWT (claim "roles" -> ROLE_*)
-    @Bean
-    public Converter<Jwt, ? extends AbstractAuthenticationToken> jwtAuthConverter() {
-        return new Converter<Jwt, AbstractAuthenticationToken>() {
-            @Override
-            public AbstractAuthenticationToken convert(Jwt jwt) {
-                List<String> roles = getRoles(jwt); // z claimu "roles"
-                List<GrantedAuthority> authorities = new ArrayList<>();
-                for (String role : roles) {
-                    String name = role.startsWith("ROLE_") ? role : "ROLE_" + role;
-                    authorities.add(new SimpleGrantedAuthority(name));
-                }
-                return new JwtAuthenticationToken(jwt, authorities, jwt.getSubject()); // principal = sub
-            }
-        };
-    }
-
-    private static List<String> getRoles(Jwt jwt) {
-        Object raw = jwt.getClaims().get("roles");
-        if (raw == null) {
-            return Collections.emptyList();
-        }
-        if (raw instanceof Collection<?>) {
-            List<String> out = new ArrayList<>();
-            for (Object o : (Collection<?>) raw) {
-                if (o != null) out.add(o.toString());
-            }
-            return out;
-        }
-        if (raw instanceof String) {
-            String s = (String) raw;
-            String[] split = s.split("[,\\s]+");
-            List<String> out = new ArrayList<>();
-            for (String it : split) {
-                if (!it.isEmpty()) out.add(it);
-            }
-            return out;
-        }
-        return Collections.emptyList();
-    }
-}
