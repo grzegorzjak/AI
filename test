@@ -1,53 +1,16 @@
-// src/test/groovy/your/pkg/TokenProviderSpec.groovy
-package your.pkg
-
-import com.auth0.jwt.JWT
-import com.auth0.jwt.algorithms.Algorithm
-import org.springframework.security.core.Authentication
-import org.springframework.security.core.authority.SimpleGrantedAuthority
-import org.springframework.security.core.context.SecurityContext
-import org.springframework.security.core.context.SecurityContextHolder
-import spock.lang.Specification
-
-import java.time.Instant
-
-class TokenProviderSpec extends Specification {
-
-    private final String secret = "test-secret"
-    private final TokenProvider tokenProvider = new TokenProvider(secret)
-
-    void cleanup() {
-        SecurityContextHolder.clearContext()
-    }
-
-    def "createJwtToken signs token with subject, roles claim, and short expiry"() {
-        given: "security context with user and roles"
-        Authentication auth = Mock() {
-            getName() >> "tester01"
-            getAuthorities() >> [
-                new SimpleGrantedAuthority("ROLE_ADMIN"),
-                new SimpleGrantedAuthority("ROLE_USER")
-            ]
-        }
-        SecurityContext ctx = Mock() {
-            getAuthentication() >> auth
-        }
-        SecurityContextHolder.setContext(ctx)
-        Instant before = Instant.now()
-
-        when: "token is created"
-        String token = tokenProvider.createJwtToken()
-
-        then: "token is valid and contains expected claims"
-        def verifier = JWT.require(Algorithm.HMAC256(secret)).build()
-        def decoded = verifier.verify(token)
-
-        decoded.subject == "tester01"
-        decoded.getClaim("roles").asString() == "ROLE_ADMIN ROLE_USER"
-
-        and: "expiry is within ~15s from creation"
-        decoded.expiresAt != null
-        decoded.expiresAt.toInstant().isAfter(before)
-        decoded.expiresAt.toInstant().isBefore(before.plusSeconds(15))
-    }
-}
+    .filter((request, next) ->
+                org.springframework.security.core.context.ReactiveSecurityContextHolder.getContext()
+                    .map(org.springframework.security.core.context.SecurityContext::getAuthentication)
+                    .defaultIfEmpty(null)
+                    .flatMap(auth -> {
+                        org.springframework.web.reactive.function.client.ClientRequest.Builder b =
+                                org.springframework.web.reactive.function.client.ClientRequest.from(request);
+                        if (auth instanceof org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken) {
+                            org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken jat =
+                                    (org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken) auth;
+                            b.headers(h -> h.setBearerAuth(jat.getToken().getTokenValue()));
+                        }
+                        return next.exchange(b.build());
+                    })
+            )
+            .build();
