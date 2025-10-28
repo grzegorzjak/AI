@@ -1,0 +1,49 @@
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.core.annotation.Order
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken
+import org.springframework.security.config.annotation.web.builders.HttpSecurity
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
+import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter
+import org.springframework.security.core.authority.SimpleGrantedAuthority
+import org.springframework.security.core.context.SecurityContextHolder
+import org.springframework.security.web.authentication.AnonymousAuthenticationFilter
+import org.springframework.web.filter.OncePerRequestFilter
+
+import javax.servlet.FilterChain
+import javax.servlet.http.HttpServletRequest
+import javax.servlet.http.HttpServletResponse
+
+@Configuration
+@EnableWebSecurity
+@Order(1)
+class TestSecurityConfiguration extends WebSecurityConfigurerAdapter {
+
+  @Bean
+  OncePerRequestFilter testAuthFilter() {
+    new OncePerRequestFilter() {
+      @Override
+      protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain) {
+        def roles = [
+          new SimpleGrantedAuthority("ROLE_USER"),
+          new SimpleGrantedAuthority("ROLE_ADMIN")
+        ]
+        def auth = new UsernamePasswordAuthenticationToken("test-user", "N/A", roles)
+        SecurityContextHolder.getContext().setAuthentication(auth)
+        try {
+          chain.doFilter(req, res)
+        } finally {
+          SecurityContextHolder.clearContext()
+        }
+      }
+    }
+  }
+
+  @Override
+  protected void configure(HttpSecurity http) throws Exception {
+    http
+      .csrf().disable()
+      .addFilterBefore(testAuthFilter(), AnonymousAuthenticationFilter)
+      .authorizeRequests().anyRequest().permitAll()
+  }
+}
