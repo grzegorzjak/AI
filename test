@@ -1,16 +1,48 @@
-    .filter((request, next) ->
-                org.springframework.security.core.context.ReactiveSecurityContextHolder.getContext()
-                    .map(org.springframework.security.core.context.SecurityContext::getAuthentication)
-                    .defaultIfEmpty(null)
-                    .flatMap(auth -> {
-                        org.springframework.web.reactive.function.client.ClientRequest.Builder b =
-                                org.springframework.web.reactive.function.client.ClientRequest.from(request);
-                        if (auth instanceof org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken) {
-                            org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken jat =
-                                    (org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken) auth;
-                            b.headers(h -> h.setBearerAuth(jat.getToken().getTokenValue()));
-                        }
-                        return next.exchange(b.build());
-                    })
-            )
-            .build();
+
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.web.client.TestRestTemplate
+import org.springframework.boot.test.web.server.LocalServerPort
+import org.springframework.http.*
+import spock.lang.Specification
+
+@SpringBootTest(
+    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+    properties = [
+        "propertieses"
+    ]
+)
+abstract class BaseApiSpec extends Specification {
+
+    // stałe wspólne
+    protected static final String BASE_URL = "http://localhost"
+    protected static final String CONTEXT  = "/context-path"  // dostosuj do swojej aplikacji
+
+    @LocalServerPort
+    protected int port
+
+    @Autowired
+    protected TestRestTemplate restTemplate
+
+    @Value('${security.jwt.secret}')
+    protected String secret
+
+    // ===== Helpers =====
+    protected URI uri(String endpoint) {
+        new URI("${BASE_URL}:${port}${CONTEXT}${endpoint}")
+    }
+
+    protected HttpHeaders authHeaders(String role = null) {
+        // jeśli masz fabrykę nagłówków – użyj jej; bez roli zwracamy puste
+        role ? SecurityHeadersFactory.create(secret, role: role) : new HttpHeaders()
+    }
+
+    protected <T> ResponseEntity<T> get(String endpoint, Class<T> type, String role = null) {
+        restTemplate.exchange(uri(endpoint), HttpMethod.GET, new HttpEntity<Void>(authHeaders(role)), type)
+    }
+
+    protected <T> ResponseEntity<T> post(String endpoint, Object body, Class<T> type, String role = null) {
+        restTemplate.exchange(uri(endpoint), HttpMethod.POST, new HttpEntity<Object>(body, authHeaders(role)), type)
+    }
+}
