@@ -1,0 +1,75 @@
+testImplementation "org.spockframework:spock-core:2.4-M1-groovy-4.0"
+testImplementation "com.github.tomakehurst:wiremock-jre8:2.35.1"   // albo org.wiremock:wiremock:3.x
+
+import com.github.tomakehurst.wiremock.WireMockServer
+import org.springframework.web.reactive.function.client.WebClient
+import spock.lang.Specification
+
+import static com.github.tomakehurst.wiremock.client.WireMock.*
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig
+
+class WireMockSpec extends Specification {
+
+  WireMockServer wm
+
+  def setup() {
+    wm = new WireMockServer(wireMockConfig().dynamicPort())
+    wm.start()
+    configureFor("localhost", wm.port())
+  }
+
+  def cleanup() {
+    wm.stop()
+  }
+
+  def "should send Bearer token in Authorization header"() {
+    given:
+    wm.stubFor(post(urlEqualTo("/nameApp/run"))
+      .willReturn(aResponse().withStatus(200).withBody("OK")))
+
+    def props = Stub(NameAppApiProperties) {
+      getnameAppUrl() >> "http://localhost:${wm.port()}/nameApp/run"
+    }
+
+    def webClient = WebClient.builder().build()
+    def client = new nameAppApiClient(props, webClient)
+
+    def token = "abc.def.ghi"
+
+    // --- stuby pod StartQcParameters.getMessage(...) ---
+    def process = Stub(MainProcess) {
+      getId() >> "P-123"
+      getCycleNumber() >> "C-1"  
+      getnameApp2() >> Stub(Object) 
+    }
+    def processType = Stub(ArdsProcessType) {
+      getTypeName() >> "SCOPE_X"
+    }
+    def customerType = Stub(CustomerType) {
+      name() >> "AIRLINE"
+    }
+    def args = Stub(ArgumentsModel) {
+      getLocationOfOutputFile() >> "/tmp/out"
+      getExtractFileName() >> "extract.zip"
+    }
+
+    def data = Stub(nameAppInitializationData) {
+      getAccessToken() >> token
+      getProcess() >> process
+      getProcessType() >> processType
+      getCustomerType() >> customerType
+      getArguments() >> args      
+    }
+
+    when:
+    client.runNameApp(data)
+
+    then:
+    wm.verify(postRequestedFor(urlEqualTo("/nameApp/run"))
+      .withHeader("Authorization", equalTo("Bearer ${token}")))
+
+    and: "opcjonalnie – Content-Type"
+    wm.verify(postRequestedFor(urlEqualTo("/nameApp/run"))
+      .withHeader("Content-Type", containing("application/json")))
+  }
+}
