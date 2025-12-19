@@ -1,0 +1,14 @@
+<T> Mono<T> runCloseableTask(Supplier<T> supplier, AtomicBoolean isActive) {
+  return Mono.defer(() -> Mono.fromCallable(() -> {
+        if (!isActive.get()) throw new ProcessCancelledException();
+        return supplier.get();
+      })
+      .subscribeOn(Schedulers.boundedElastic())
+      // jeśli cancel został poproszony – kończymy “grzecznie”:
+      .onErrorResume(ProcessCancelledException.class, e -> Mono.empty())
+      .doOnError(e -> {
+        isActive.set(false);
+        errorConsumer(e, isActive);
+      })
+  );
+}
